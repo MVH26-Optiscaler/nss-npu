@@ -29,6 +29,18 @@ from onnxruntime.quantization.execution_providers.qnn import (
 INPUT_Q = (0.003912401385605335, -128)
 OUTPUT_Q = (0.003937007859349251, -127)
 
+# Arm's own I/O quantisation, from nss_v1_0_1_high_int8_metadata.json. Forcing
+# these rather than letting calibration pick its own is what makes the int8
+# interface byte-compatible with Arm's pre- and post-process shaders: the
+# tensor the shader writes is the tensor the network reads, with no requantise
+# in between. Calibration lands ~0.4% away, which is close enough to look
+# right and wrong enough to shift every value.
+IO_OVERRIDES = {
+    "preprocess_tensor": INPUT_Q,
+    "kpn_coefficients": OUTPUT_Q,
+    "temporal_tensor": OUTPUT_Q,
+}
+
 
 def dequant(a, q):
     scale, zero = q
@@ -108,12 +120,20 @@ def main():
     # weights the KPN head collapses to corr 0.26 against Arm's reference,
     # because its 36 sigmoid channels span very different ranges. Per-channel
     # takes it to 0.998.
+    overrides = {
+        # 0-d numpy arrays, not numpy scalars: the quantizer type-checks for
+        # ndarray and rejects np.int8/np.float32 values outright.
+        name: [{"scale": np.array(scale, dtype=np.float32),
+                "zero_point": np.array(zero, dtype=np.int8)}]
+        for name, (scale, zero) in IO_OVERRIDES.items()
+    }
     config = get_qnn_qdq_config(
         src,
         Frames(input_name, frames),
         activation_type=act,
         weight_type=QuantType.QInt8,
         per_channel=True,
+        init_overrides=overrides,
     )
     quantize(src, args.out, config)
     print(f"wrote {args.out}  activations={args.activations} weights=int8 per-channel")

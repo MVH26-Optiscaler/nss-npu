@@ -246,6 +246,22 @@ released explicitly and the process leaves via `_exit`, skipping the C++
 runtime teardown. Without unbuffered stdio this looks like a crash with no
 output at all, which is thoroughly misleading — it happens *after* the work.
 
+## In the game's process
+
+NSS now runs on the NPU from inside GameNative's wine process, via the bridge
+in `~/dev/xess-shim/bridge` -- 19.8 ms mean, whole graph as one QNN node, no
+copy between the PE side and ORT. Two things about that process differ from an
+ordinary app and both cost real time to find:
+
+- Wine's unix side runs in the linker's `"(default)"` namespace, so the
+  `<uses-native-library>` declaration this project needed has **no effect**
+  there. `/vendor/lib64` is not permitted, `/data` is, so the FastRPC libraries
+  are staged beside the runtime and loaded by absolute path with their
+  dependencies preloaded `RTLD_GLOBAL`.
+- Unsigned process domains must be enabled explicitly before QNN initialises.
+  This project's probe did it incidentally, which is why ORT worked here first
+  and looked like it would work anywhere.
+
 ## Consequences for the port
 
 GameNative runs as `untrusted_app`, and `untrusted_app` can drive the NPU. So
