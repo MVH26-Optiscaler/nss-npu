@@ -13,3 +13,5 @@ models/*.pt
 models/*.onnx
 third_party/*.aar
 third_party/gym/
+third_party/wine/       # wine headers, from the proton tree (see README)
+third_party/ort-headers/
