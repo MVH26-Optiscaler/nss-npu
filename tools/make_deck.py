@@ -60,6 +60,38 @@ def metric(s, x, y, value, label, color=GOOD):
     text(s, x, y + Inches(0.62), Inches(3.0), Inches(0.6), label, size=12, color=MUTED)
 
 
+def table(s, x, y, w, rows, col_w, head=ACCENT):
+    shape = s.shapes.add_table(len(rows), len(rows[0]), x, y, w,
+                               Inches(0.34) * len(rows))
+    t = shape.table
+    t.first_row = False
+    for i, cw in enumerate(col_w):
+        t.columns[i].width = cw
+    for r, row in enumerate(rows):
+        t.rows[r].height = Inches(0.34)
+        for c, val in enumerate(row):
+            cell = t.cell(r, c)
+            cell.text = val
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = RGBColor(0x15, 0x1A, 0x23) if r else BG
+            cell.margin_left = Inches(0.12)
+            cell.margin_top = Emu(0)
+            cell.margin_bottom = Emu(0)
+            para = cell.text_frame.paragraphs[0]
+            para.alignment = PP_ALIGN.RIGHT if c else PP_ALIGN.LEFT
+            run = para.runs[0]
+            run.font.size = Pt(13)
+            run.font.name = "Inter"
+            run.font.bold = (r == 0) or (r == len(rows) - 1)
+            if r == 0:
+                run.font.color.rgb = head
+            elif r == len(rows) - 1:
+                run.font.color.rgb = GOOD
+            else:
+                run.font.color.rgb = MUTED if c == 0 else FG
+    return shape
+
+
 def build(path):
     prs = Presentation()
     prs.slide_width, prs.slide_height = W, H
@@ -132,9 +164,50 @@ def build(path):
     text(s, Inches(0.9), Inches(6.6), Inches(11.5), Inches(0.6),
          [("Layout was worth 2.6×.  ", {"bold": True, "color": GOOD}),
           "The HTP is NHWC-native — an NCHW interface made QNN convert layout around "
-          "every operator. 19.8 ms → 7.5 ms with the graph unchanged, then 7.5 → "
-          "2.3 ms by asking the DSP for a sustained clock instead of its default."],
+          "every operator. 19.8 ms → 7.5 ms, with the graph itself unchanged."],
          size=14, color=MUTED)
+
+    # ---------------------------------------------------------------- slide 3
+    s = slide(prs)
+    text(s, Inches(0.9), Inches(0.55), Inches(11.5), Inches(0.5),
+         "WHERE THE MILLISECONDS WENT", size=13, color=ACCENT, bold=True)
+    text(s, Inches(0.9), Inches(1.0), Inches(11.5), Inches(1.0),
+         "Measured, not assumed", size=40, bold=True)
+    rule(s, Inches(1.95))
+
+    text(s, Inches(0.9), Inches(2.25), Inches(5.4), Inches(0.5),
+         "The DSP idles unless asked otherwise", size=17, bold=True, color=GOOD)
+    table(s, Inches(0.9), Inches(2.8), Inches(5.4), [
+        ("HTP performance mode", "NSS inference"),
+        ("default — never set", "7.51 ms"),
+        ("balanced", "3.09 ms"),
+        ("high_performance", "2.41 ms"),
+        ("burst", "2.36 ms"),
+        ("sustained_high_performance", "2.33 ms"),
+    ], [Inches(3.7), Inches(1.7)])
+    text(s, Inches(0.9), Inches(5.05), Inches(5.4), Inches(1.0),
+         "One provider option, 3.2× — and sustained rather than burst, because burst "
+         "profiles are time-limited by design and would decay under a continuous "
+         "frame loop.", size=13, color=MUTED)
+
+    text(s, Inches(6.9), Inches(2.25), Inches(5.5), Inches(0.5),
+         "The frame is GPU-bound", size=17, bold=True, color=GOOD)
+    text(s, Inches(6.9), Inches(2.8), Inches(5.5), Inches(2.2), [
+        "Native FSR 2 and our shim both sit at 72–75% GPU utilisation, so the "
+        "bottleneck is the pixels the game rasterises — not the upscaler, and not "
+        "the CPU.",
+        "That is why render scale is the lever that moves frame rate, and why moving "
+        "reconstruction onto the NPU is worth doing: it buys quality back without "
+        "spending GPU.",
+    ], size=13, color=MUTED, space=8)
+
+    text(s, Inches(6.9), Inches(5.05), Inches(5.5), Inches(1.6), [
+        ("Still on the table", {"size": 15, "bold": True, "color": ACCENT}),
+        "Pipeline the NPU one frame behind the GPU — they are separate units, so the "
+        "2.3 ms leaves the critical path entirely.  ·  Zero-copy dmabuf tensors "
+        "remove the ~2.7 ms round trip.  ·  A cached context binary kills the ~1 s "
+        "first-run compile.",
+    ], size=13, color=MUTED, space=6)
 
     # ---------------------------------------------------------------- slide 3
     s = slide(prs)
