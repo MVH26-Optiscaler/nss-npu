@@ -1,0 +1,36 @@
+{
+    "inputs": {
+        "_PreprocessTensor": {
+            "SINT": {
+                "scale": 0.003912401385605335,
+                "zero_point": -128
+            },
+            "SNORM": {
+                "scale": 0.4968749759718776,
+                "zero_point": -1.0078740157480315
+            }
+        }
+    },
+    "outputs": {
+        "_KpnCoefficients": {
+            "SINT": {
+                "scale": 0.003937007859349251,
+                "zero_point": -127
+            },
+            "SNORM": {
+                "scale": 0.49999999813735485,
+                "zero_point": -1.0
+            }
+        },
+        "_TemporalTensor": {
+            "SINT": {
+                "scale": 0.003937007859349251,
+                "zero_point": -127
+            },
+            "SNORM": {
+                "scale": 0.49999999813735485,
+                "zero_point": -1.0
+            }
+        }
+    }
+}
