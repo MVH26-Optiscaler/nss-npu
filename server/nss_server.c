@@ -28,6 +28,13 @@
 
 static const OrtApi *ort;
 
+/* Shape and element type come from the model, so this benchmarks any
+ * single-input ONNX graph on the NPU rather than only NSS. */
+static int64_t in_shape[8];
+static size_t in_rank;
+static ONNXTensorElementDataType in_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+static size_t in_elem_size = sizeof(float);
+
 // NSS v1 "high": 960x540 render padded to 544, 12 packed channels in.
 enum { IN_N = 1, IN_C = 12, IN_H = 544, IN_W = 960 };
 
@@ -64,21 +71,27 @@ struct model {
     OrtMemoryInfo *mem;
     char *input_name;
     char *output_names[2];
+    size_t output_count;
     size_t input_elems;
 };
 
 static void model_open(struct model *m, const char *path, const char *backend) {
     OrtSessionOptions *opts;
 
-    CHECK(ort->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "nss", &m->env));
+    CHECK(ort->CreateEnv(getenv("NSS_ORT_VERBOSE") ? ORT_LOGGING_LEVEL_VERBOSE
+                                                   : ORT_LOGGING_LEVEL_WARNING,
+                         "nss", &m->env));
     CHECK(ort->CreateSessionOptions(&opts));
 
     if (backend) {
         // QNN picks the accelerator by backend library: libQnnHtp.so is the
         // NPU, libQnnGpu.so the Adreno, libQnnCpu.so a reference path.
-        const char *keys[] = { "backend_path" };
-        const char *values[] = { backend };
-        CHECK(ort->SessionOptionsAppendExecutionProvider(opts, "QNN", keys, values, 1));
+        /* Same settings the in-game bridge uses, so numbers are comparable:
+         * a sustained DSP clock, and fp16 for graphs that are not quantised. */
+        const char *keys[] = { "backend_path", "htp_performance_mode",
+                               "enable_htp_fp16_precision" };
+        const char *values[] = { backend, "sustained_high_performance", "1" };
+        CHECK(ort->SessionOptionsAppendExecutionProvider(opts, "QNN", keys, values, 3));
     }
 
     CHECK(ort->CreateSession(m->env, path, opts, &m->session));
@@ -88,28 +101,50 @@ static void model_open(struct model *m, const char *path, const char *backend) {
     CHECK(ort->GetAllocatorWithDefaultOptions(&alloc));
     CHECK(ort->SessionGetInputName(m->session, 0, alloc, &m->input_name));
     CHECK(ort->SessionGetOutputName(m->session, 0, alloc, &m->output_names[0]));
-    CHECK(ort->SessionGetOutputName(m->session, 1, alloc, &m->output_names[1]));
+    {
+        size_t out_count = 0;
+        CHECK(ort->SessionGetOutputCount(m->session, &out_count));
+        m->output_count = out_count > 2 ? 2 : (out_count ? out_count : 1);
+        if (m->output_count > 1)
+            CHECK(ort->SessionGetOutputName(m->session, 1, alloc, &m->output_names[1]));
+    }
     CHECK(ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &m->mem));
 
-    m->input_elems = (size_t)IN_N * IN_C * IN_H * IN_W;
-    printf("model %s\n  input  %s [%d,%d,%d,%d]\n  outputs %s, %s\n",
-           path, m->input_name, IN_N, IN_C, IN_H, IN_W,
-           m->output_names[0], m->output_names[1]);
+    {
+        OrtTypeInfo *info = NULL;
+        const OrtTensorTypeAndShapeInfo *shape_info = NULL;
+        CHECK(ort->SessionGetInputTypeInfo(m->session, 0, &info));
+        CHECK(ort->CastTypeInfoToTensorInfo(info, &shape_info));
+        CHECK(ort->GetDimensionsCount(shape_info, &in_rank));
+        if (in_rank > 8) in_rank = 8;
+        CHECK(ort->GetDimensions(shape_info, in_shape, in_rank));
+        CHECK(ort->GetTensorShapeElementCount(shape_info, &m->input_elems));
+        CHECK(ort->GetTensorElementType(shape_info, &in_type));
+        ort->ReleaseTypeInfo(info);
+        in_elem_size = (in_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8 ||
+                        in_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8) ? 1 : sizeof(float);
+    }
+
+    printf("model %s\n  input  %s [", path, m->input_name);
+    for (size_t i = 0; i < in_rank; i++)
+        printf("%s%lld", i ? "," : "", (long long)in_shape[i]);
+    printf("]  %s\n  outputs %s%s%s\n",
+           in_elem_size == 1 ? "int8" : "float", m->output_names[0],
+           m->output_names[1] ? ", " : "", m->output_names[1] ? m->output_names[1] : "");
 }
 
 /** Runs one frame. Caller owns `input`; outputs are returned as ORT values. */
 static void model_run(struct model *m, float *input, OrtValue **outputs) {
-    const int64_t shape[] = { IN_N, IN_C, IN_H, IN_W };
     OrtValue *in = NULL;
 
     CHECK(ort->CreateTensorWithDataAsOrtValue(
-            m->mem, input, m->input_elems * sizeof(float),
-            shape, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &in));
+            m->mem, input, m->input_elems * in_elem_size,
+            in_shape, in_rank, in_type, &in));
 
     outputs[0] = outputs[1] = NULL;
     CHECK(ort->Run(m->session, NULL,
                    (const char *const *)&m->input_name, (const OrtValue *const *)&in, 1,
-                   (const char *const *)m->output_names, 2, outputs));
+                   (const char *const *)m->output_names, m->output_count, outputs));
     ort->ReleaseValue(in);
 }
 
@@ -137,18 +172,17 @@ static int bench(const char *model_path, const char *backend, const char *input_
 
     model_open(&m, model_path, backend);
 
-    input = malloc(m.input_elems * sizeof(float));
+    input = malloc(m.input_elems * in_elem_size);
     if (!input) die("malloc", NULL);
     if (!(f = fopen(input_path, "rb"))) die(input_path, NULL);
-    if (fread(input, sizeof(float), m.input_elems, f) != m.input_elems)
+    if (fread(input, in_elem_size, m.input_elems, f) != m.input_elems)
         die("short read on input", NULL);
     fclose(f);
 
     OrtValue *out[2];
     for (int i = 0; i < 3; i++) {           /* warm up graph + allocations */
         model_run(&m, input, out);
-        ort->ReleaseValue(out[0]);
-        ort->ReleaseValue(out[1]);
+        for (size_t k = 0; k < m.output_count; k++) ort->ReleaseValue(out[k]);
     }
 
     double best = 1e9, total = 0;
@@ -158,16 +192,14 @@ static int bench(const char *model_path, const char *backend, const char *input_
         double dt = now_ms() - t;
         total += dt;
         if (dt < best) best = dt;
-        if (i + 1 < runs) {
-            ort->ReleaseValue(out[0]);
-            ort->ReleaseValue(out[1]);
-        }
+        if (i + 1 < runs)
+            for (size_t k = 0; k < m.output_count; k++) ort->ReleaseValue(out[k]);
     }
     printf("%-28s mean %7.2f ms   best %7.2f ms   (%d runs)\n",
            backend ? backend : "CPU", total / runs, best, runs);
 
     if (dump_prefix) {
-        for (int i = 0; i < 2; i++) {
+        for (size_t i = 0; i < m.output_count; i++) {
             char path[512];
             void *data;
             snprintf(path, sizeof path, "%s_%d.f32", dump_prefix, i);
@@ -179,8 +211,7 @@ static int bench(const char *model_path, const char *backend, const char *input_
             printf("  wrote %s (%zu bytes)\n", path, value_bytes(out[i]));
         }
     }
-    ort->ReleaseValue(out[0]);
-    ort->ReleaseValue(out[1]);
+    for (size_t k = 0; k < m.output_count; k++) ort->ReleaseValue(out[k]);
     free(input);
     model_close(&m);
     return 0;
