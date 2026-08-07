@@ -262,6 +262,24 @@ ordinary app and both cost real time to find:
   This project's probe did it incidentally, which is why ORT worked here first
   and looked like it would work anywhere.
 
+## NHWC is worth 2.6x
+
+Arm's pre-process shader writes the input tensor as NHWC int8 and its
+post-process reads NHWC back, while a PyTorch export is NCHW. `tools/nhwc_io.py`
+wraps the graph's boundary in transposes so its interface is NHWC without
+touching the interior.
+
+That was meant to avoid a 6.3MB CPU transpose per frame. It also turned out to
+be the single biggest speedup so far, measured in the game's process:
+
+    NCHW interface   19.82 ms
+    NHWC interface    7.51 ms
+
+HTP is NHWC-native, so an NCHW interface makes QNN convert the layout around
+every operator; giving it NHWC lets the boundary transposes cancel against the
+ones it would otherwise insert. Accuracy is bit-identical to the NCHW model
+against Arm's reference -- the interior is unchanged.
+
 ## Consequences for the port
 
 GameNative runs as `untrusted_app`, and `untrusted_app` can drive the NPU. So
