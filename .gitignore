@@ -5,13 +5,18 @@ probe/build/
 *.keystore
 
 # Fetched or generated artefacts, all reproducible:
-#   models/*.pt      -> huggingface.co/Arm/neural-super-sampling
-#   models/*.onnx    -> tools/export_nss.py, tools/quantize_nss.py
-#   third_party/*.aar-> repo1.maven.org onnxruntime-android-qnn
-#   third_party/gym  -> fetched by tools/export_nss.py
+#   models/*.pt        -> huggingface.co/Arm/neural-super-sampling
+#   models/*.onnx      -> tools/export_nss.py, quantize_nss.py, nhwc_io.py,
+#                         prepare_style.py
+#   models/*.f32,*.bin -> raw tensor dumps written by the tools and the harness
+#   third_party/*.aar  -> repo1.maven.org, onnxruntime-android-qnn
+#   third_party/gym    -> fetched by tools/export_nss.py
+#   third_party/wine   -> wine headers from the Proton tree (see README)
 models/*.pt
 models/*.onnx
+models/*.f32
+models/*.bin
 third_party/*.aar
 third_party/gym/
-third_party/wine/       # wine headers, from the proton tree (see README)
+third_party/wine/
 third_party/ort-headers/
