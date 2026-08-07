@@ -214,6 +214,38 @@ Quantising to int8 QDQ with those exact parameters is the next step, and it
 should also cut the per-inference transfer: the fp32 input tensor alone is
 25 MB, against 6 MB for int8.
 
+## The inference server
+
+`server/` is NSS on the NPU behind a socket. The XeSS shim is PE code running
+under Proton while ONNX Runtime and QNN are bionic ELF, so something has to
+cross that boundary. The eventual answer is a wine unixlib in the game's own
+process — GameNative runs as `untrusted_app`, which can drive the NPU — but
+building one needs wine headers from the Proton tree. A socket needs nothing,
+runs today, and keeps the same wire format when the transport moves in-process.
+
+    ./nss_server --model nss_v1_high_544x960_int8.onnx \
+                 --bench ref_input_1x12x544x960.f32 --dump out
+    libQnnHtp.so                 mean   23.71 ms   best   21.08 ms   (20 runs)
+
+That matches the APK measurement (23.78 / 21.02) to within noise, which is the
+point of having both: the same model and runtime, reached two different ways.
+
+The dumped outputs were pulled back and correlated against Arm's reference:
+
+    out_0.f32 -> out_graph_0.npy (kpn)       corr 0.99755   mean|err| 0.00806
+    out_1.f32 -> out_graph_1.npy (temporal)  corr 0.99997   mean|err| 0.00205
+
+So the NPU is not merely running something quickly — it is producing NSS's
+actual output.
+
+**One platform quirk worth knowing.** ORT's static destructors touch an
+already-destroyed mutex at process exit on this device, aborting a run that has
+otherwise completed and printed its results (`FORTIFY: pthread_mutex_lock
+called on a destroyed mutex`, or a Scudo double-free under QNN). Everything is
+released explicitly and the process leaves via `_exit`, skipping the C++
+runtime teardown. Without unbuffered stdio this looks like a crash with no
+output at all, which is thoroughly misleading — it happens *after* the work.
+
 ## Consequences for the port
 
 GameNative runs as `untrusted_app`, and `untrusted_app` can drive the NPU. So
@@ -255,6 +287,7 @@ quality, and the result itself.
     models/         superres_fixed.onnx, the HTP smoke-test model
     third_party/    onnxruntime-android-qnn AARs (1.21.1 is the pinned one)
     tools/          prepare_model.py -- pins shapes, drops initialiser inputs
+    server/         NSS inference over a socket, for the Proton shim to call
     probe/          DSP reachability probe + ORT/HTP benchmark
       jni/          probe_core.c is shared; _main is the CLI, _jni is the app
                     openmode_shim.c traces and rewrites fastrpc opens
