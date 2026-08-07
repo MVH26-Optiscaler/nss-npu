@@ -90,11 +90,11 @@ def build(path):
         "full screen.",
         "SGSR 2.0 — The Witcher 3, D3D12 through vkd3d. Ported GLSL to HLSL; both "
         "passes cost ~1 ms of frame time.",
-        "Arm NSS — running on the Hexagon NPU, inside the game's own process.",
+        "Arm NSS — 2.3 ms on the Hexagon NPU, inside the game's own process.",
     ], size=15, space=12)
 
     metric(s, Inches(0.9), Inches(6.35), "14–25 fps", "The Witcher 3, upscaled")
-    metric(s, Inches(4.2), Inches(6.35), "7.5 ms", "NSS inference on the NPU")
+    metric(s, Inches(4.2), Inches(6.35), "2.3 ms", "NSS inference on the NPU")
     metric(s, Inches(7.5), Inches(6.35), "~1 ms", "SGSR 2 GPU cost")
     metric(s, Inches(10.5), Inches(6.35), "0 code", "changes to the game")
 
@@ -132,7 +132,8 @@ def build(path):
     text(s, Inches(0.9), Inches(6.6), Inches(11.5), Inches(0.6),
          [("Layout was worth 2.6×.  ", {"bold": True, "color": GOOD}),
           "The HTP is NHWC-native — an NCHW interface made QNN convert layout around "
-          "every operator. 19.8 ms → 7.5 ms, with the graph unchanged."],
+          "every operator. 19.8 ms → 7.5 ms with the graph unchanged, then 7.5 → "
+          "2.3 ms by asking the DSP for a sustained clock instead of its default."],
          size=14, color=MUTED)
 
     # ---------------------------------------------------------------- slide 3
